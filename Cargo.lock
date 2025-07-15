@@ -382,6 +382,8 @@ dependencies = [
  "embassy-executor",
  "embassy-nrf",
  "embassy-time",
+ "futures",
+ "futures-core",
  "nrf-modem",
  "panic-probe",
  "tinyrlibc",
@@ -745,10 +747,11 @@ dependencies = [
 [[package]]
 name = "nrf-modem"
 version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a56fb142381f00957a36c427c5a7221daae2d9c30edf178608326959019e41a5"
 dependencies = [
  "arrayvec",
  "at-commands",
- "cc",
  "cortex-m",
  "critical-section",
  "defmt 1.0.1",

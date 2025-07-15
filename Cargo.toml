@@ -33,14 +33,15 @@ cortex-m = { version = "0.7.6", features = [
 ] }
 cortex-m-rt = "0.7.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-nrf-modem = { path = "/home/nponsard/git/nrf-modem", features = [
+nrf-modem = { version = "0.7.2", features = [
   "nrf9151",
   "defmt",
-  "modem-log",
-  "modem-trace",
+  # "modem-log",
+  # "modem-trace",
 ] }
 
 tinyrlibc = "0.5.0"
-
+futures-core = { version = "0.3.31", default-features = false }
+futures = { version = "0.3", default-features = false }
 [profile.release]
 debug = 2

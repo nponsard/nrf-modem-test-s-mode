@@ -2,6 +2,7 @@
 #![no_main]
 use embassy_nrf::pac::uicr::vals::{Hfxocnt, Hfxosrc};
 use embassy_nrf::pac::NVMC;
+use futures::stream::{self, StreamExt};
 use tinyrlibc::*;
 
 use cortex_m::peripheral::NVIC;
@@ -13,8 +14,9 @@ use embassy_nrf::{
     pac::{NVMC_S, UICR_S},
 };
 use embassy_time::Timer;
-use nrf_modem::SystemMode;
+use futures_core::Stream;
 use nrf_modem::{ConnectionPreference, MemoryLayout};
+use nrf_modem::{GnssData, SystemMode};
 use {defmt_rtt as _, panic_probe as _};
 
 extern "C" {
@@ -145,8 +147,8 @@ async fn main(_spawner: Spawner) {
         SystemMode {
             lte_support: true,
             lte_psm_support: true,
-            nbiot_support: false,
-            gnss_support: false,
+            nbiot_support: true,
+            gnss_support: true,
             preference: ConnectionPreference::None,
         },
         MemoryLayout {
@@ -161,12 +163,60 @@ async fn main(_spawner: Spawner) {
 
     let response = nrf_modem::send_at::<64>("AT+CGMI").await.unwrap();
     defmt::info!("Modem Manufacturer: {}", response.as_str());
-    loop {
-        led.set_high();
-        defmt::info!("high");
-        Timer::after_millis(500).await;
-        led.set_low();
-        defmt::info!("low");
-        Timer::after_millis(1000).await;
+    let gnss = nrf_modem::Gnss::new().await.unwrap();
+    defmt::info!("GNSS initialized");
+    let mut stream = gnss.start_single_fix(
+        nrf_modem::GnssConfig {
+            elevation_threshold_angle: 1,
+            use_case: nrf_modem::GnssUsecase {
+                low_accuracy: true,
+                scheduled_downloads_disable: false,
+            },
+            nmea_mask: nrf_modem::NmeaMask {
+                gga: true,
+                gll: true,
+                gsa: true,
+                gsv: true,
+                rmc: true,
+            },
+            timing_source: nrf_modem::GnssTimingSource::Tcxo,
+            power_mode: nrf_modem::GnssPowerSaveMode::DutyCyclingPerformance,
+        },
+        1000,
+    );
+    defmt::info!("GNSS stream started");
+    let mut stream = match stream {
+        Ok(s) => s,
+        Err(e) => {
+            defmt::error!("Failed to start GNSS: {:?}", e);
+            return;
+        }
+    };
+
+    defmt::info!("GNSS stream is ready");
+    while let Some(value) = stream.next().await {
+        defmt::debug!("GNSS event");
+        if let Err(e) = value {
+            defmt::error!("GNSS Error: {:?}", e);
+            continue;
+        }
+        if let Ok(evt) = value {
+            match evt {
+                GnssData::Agps(agps) => {
+                    defmt::info!("GNSS AGPS: {:?}", agps.data_flags);
+                }
+                GnssData::Nmea(nmea) => {
+                    defmt::info!("GNSS NMEA: {}", nmea.as_str());
+                }
+                GnssData::PositionVelocityTime(pos) => {
+                    defmt::info!(
+                        "GNSS Position: {},{},{}",
+                        pos.latitude,
+                        pos.longitude,
+                        pos.altitude
+                    );
+                }
+            }
+        }
     }
 }
