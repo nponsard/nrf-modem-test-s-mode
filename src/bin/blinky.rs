@@ -1,13 +1,17 @@
 #![no_std]
 #![no_main]
 use embassy_nrf::pac::uicr::vals::{Hfxocnt, Hfxosrc};
+use embassy_nrf::pac::NVMC;
 use tinyrlibc::*;
 
 use cortex_m::peripheral::NVIC;
 use defmt::{debug, expect, info};
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::{interrupt, pac};
+use embassy_nrf::{
+    interrupt, pac,
+    pac::{NVMC_S, UICR_S},
+};
 use embassy_time::Timer;
 use nrf_modem::SystemMode;
 use nrf_modem::{ConnectionPreference, MemoryLayout};
@@ -16,6 +20,43 @@ use {defmt_rtt as _, panic_probe as _};
 extern "C" {
     static __start_ipc: u8;
     static __end_ipc: u8;
+}
+
+fn uicr_hfxo_workaround() {
+    defmt::info!("dsb");
+
+    cortex_m::asm::dsb();
+
+    defmt::info!("a");
+
+    while !NVMC_S.ready().read().ready() {}
+    defmt::info!("b");
+    NVMC_S
+        .config()
+        .write(|w| w.set_wen(pac::nvmc::vals::Wen::WEN));
+    defmt::info!("c");
+
+    while !NVMC_S.ready().read().ready() {}
+
+    UICR_S.hfxosrc().write(|w| w.set_hfxosrc(Hfxosrc::TCXO));
+    cortex_m::asm::dsb();
+    while !NVMC_S.ready().read().ready() {}
+    defmt::info!("d");
+
+    UICR_S.hfxocnt().write(|w| w.set_hfxocnt(Hfxocnt(32)));
+    cortex_m::asm::dsb();
+    while !NVMC_S.ready().read().ready() {}
+
+    defmt::info!("e");
+
+    NVMC_S
+        .config()
+        .write(|w| w.set_wen(pac::nvmc::vals::Wen::REN));
+    while !NVMC_S.ready().read().ready() {}
+
+    defmt::info!("f");
+
+    cortex_m::peripheral::SCB::sys_reset();
 }
 
 #[embassy_executor::main]
@@ -34,14 +75,18 @@ async fn main(_spawner: Spawner) {
     let hfxocnt = uicr.hfxocnt().read().hfxocnt().to_bits();
     let hfxosrc = uicr.hfxosrc().read().hfxosrc().to_bits();
 
-    // uicr.hfxosrc().read();
-
-    // uicr.hfxocnt().write(|w| w.set_hfxocnt(Hfxocnt(251)));
-    // uicr.hfxosrc().write(|w| w.set_hfxosrc(Hfxosrc::TCXO));
-
     defmt::info!("HFXO Count: {}", hfxocnt);
     defmt::info!("HFXO Source: {}", hfxosrc);
 
+    if hfxocnt == 255 || hfxosrc == 1 {
+        uicr_hfxo_workaround();
+    }
+    
+    let hfxocnt = uicr.hfxocnt().read().hfxocnt().to_bits();
+    let hfxosrc = uicr.hfxosrc().read().hfxosrc().to_bits();
+
+    defmt::info!("HFXO Count: {}", hfxocnt);
+    defmt::info!("HFXO Source: {}", hfxosrc);
     fn configure_modem_non_secure() -> u32 {
         // The RAM memory space is divided into 32 regions of 8 KiB.
         // Set IPC RAM to nonsecure
