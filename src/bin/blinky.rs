@@ -23,38 +23,48 @@ extern "C" {
 }
 
 fn uicr_hfxo_workaround() {
-    defmt::info!("dsb");
+    let uicr = embassy_nrf::pac::UICR_S;
+    let hfxocnt = uicr.hfxocnt().read().hfxocnt().to_bits();
+    let hfxosrc = uicr.hfxosrc().read().hfxosrc().to_bits();
 
+    if hfxocnt != 255 && hfxosrc != 1 {
+        return;
+    }
+
+    let irq_disabled = cortex_m::register::primask::read().is_inactive();
+    if !irq_disabled {
+        cortex_m::interrupt::disable();
+    }
     cortex_m::asm::dsb();
-
-    defmt::info!("a");
-
     while !NVMC_S.ready().read().ready() {}
-    defmt::info!("b");
+
     NVMC_S
         .config()
         .write(|w| w.set_wen(pac::nvmc::vals::Wen::WEN));
-    defmt::info!("c");
-
     while !NVMC_S.ready().read().ready() {}
 
-    UICR_S.hfxosrc().write(|w| w.set_hfxosrc(Hfxosrc::TCXO));
-    cortex_m::asm::dsb();
-    while !NVMC_S.ready().read().ready() {}
-    defmt::info!("d");
+    if hfxosrc == 1 {
+        UICR_S.hfxosrc().write(|w| w.set_hfxosrc(Hfxosrc::TCXO));
+        cortex_m::asm::dsb();
+        while !NVMC_S.ready().read().ready() {}
+    }
 
-    UICR_S.hfxocnt().write(|w| w.set_hfxocnt(Hfxocnt(32)));
-    cortex_m::asm::dsb();
-    while !NVMC_S.ready().read().ready() {}
-
-    defmt::info!("e");
+    if hfxocnt == 255 {
+        UICR_S.hfxocnt().write(|w| w.set_hfxocnt(Hfxocnt(32)));
+        cortex_m::asm::dsb();
+        while !NVMC_S.ready().read().ready() {}
+    }
 
     NVMC_S
         .config()
         .write(|w| w.set_wen(pac::nvmc::vals::Wen::REN));
     while !NVMC_S.ready().read().ready() {}
 
-    defmt::info!("f");
+    if !irq_disabled {
+        unsafe {
+            cortex_m::interrupt::enable();
+        }
+    }
 
     cortex_m::peripheral::SCB::sys_reset();
 }
@@ -66,7 +76,7 @@ async fn main(_spawner: Spawner) {
     let mut led = Output::new(embassy_peripherals.P0_00, Level::Low, OutputDrive::Standard);
 
     let clock = embassy_nrf::pac::CLOCK_S;
-    clock.tasks_hfclkstart().write_value(1);
+    // clock.tasks_hfclkstart().write_value(1);
     let stat = clock.hfclkstat().read();
     defmt::info!("HFCLK Source: {}", stat.src().to_bits());
     defmt::info!("HFCLK State: {}", stat.state());
@@ -78,10 +88,8 @@ async fn main(_spawner: Spawner) {
     defmt::info!("HFXO Count: {}", hfxocnt);
     defmt::info!("HFXO Source: {}", hfxosrc);
 
-    if hfxocnt == 255 || hfxosrc == 1 {
-        uicr_hfxo_workaround();
-    }
-    
+    uicr_hfxo_workaround();
+
     let hfxocnt = uicr.hfxocnt().read().hfxocnt().to_bits();
     let hfxosrc = uicr.hfxosrc().read().hfxosrc().to_bits();
 
